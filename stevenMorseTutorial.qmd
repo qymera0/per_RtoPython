@@ -1,0 +1,239 @@
+---
+title: "Steven Morse tutorial"
+format: html
+editor: visual
+---
+
+# LOAD PACKAGES / LIBRARIES
+
+## R
+
+```{r}
+#| label: LOADPACKAGES
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(reticulate)
+
+# Cofigure corrent Conda env
+
+# use_condaenv(
+#         condaenv = 'rToPython'
+# )
+
+```
+
+## Python
+
+```{python}
+#| label: LOADLIBRARIES
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+```
+
+## Configure Python libraries
+
+```{python}
+#| label: CONFIGPYTHON
+
+sns.set_style('white')
+
+```
+
+# LOAD DATA
+
+```{python}
+#| label: LOADDATA
+
+df = sns.load_dataset('diamonds')
+
+df.head()
+
+```
+
+# TUTORIAL
+
+## Piping and filtering
+
+```{r}
+#| label: RPIPINGFILTERING
+
+py$df %>% 
+        select(carat, color) %>% 
+        filter(color == 'E') %>% 
+        head(3)
+
+```
+
+```{python}
+#| label: PITHONPIPEFILTERING
+
+(df
+ .filter(['carat', 'color'])
+ .query('color == "E"')
+ .head(3)
+)
+
+```
+
+## Summarization
+
+```{r}
+#| label: RSUMMARIZATION
+
+py$df %>% 
+        select(starts_with('c')) %>% 
+        filter(cut %in% c('Ideal', 'Premium')) %>% 
+        group_by(cut, color, clarity) %>% 
+        summarise(
+                avgcarat = mean(carat, na.rm = T),
+                n = n()
+        ) %>% 
+        arrange(desc(avgcarat)) %>% 
+        head()
+
+```
+
+```{python}
+#| label: PYTHONSUMMARIZATION
+
+dfSum = (df
+         .filter(regex='^c')
+         .query('cut in ["Ideal", "Premium"]')
+         .groupby(['cut', 'color', 'clarity'])
+         .agg(['mean', 'size'])
+         .sort_values(by=('carat', 'mean'), ascending=False)
+         .head()
+)
+
+dfSum.head()
+
+```
+
+## Pivoting and plotting
+
+```{r}
+#| label: RPIVOTANDPLOT
+#| message: false
+#| warning: false
+
+py$df %>% 
+        select(x, y, z) %>% 
+        gather(key = dim, value = mm) %>% 
+        head()
+
+py$df %>%
+        mutate(
+                price.cat = 
+                        cut(price, 
+                            breaks = 3, 
+                            labels = c('low', 'med', 'high')
+                            )
+                ) %>%
+        select(price.cat, width = x, depth = z) %>%
+        pivot_longer(
+                cols = c(width, depth),
+                names_to = 'dim',
+                values_to = 'mm'
+        ) %>% 
+        filter(mm < 10) %>% 
+        ggplot(aes(x = mm, fill = dim)) +
+        geom_density(alpha = 0.5) +
+        facet_wrap(~price.cat) +
+        ylab('')
+
+
+```
+
+```{python}
+#| label: PYTHONPIVOTPLOT
+
+# Vanilla sns plot
+
+dfPlot = (df
+ .assign(pricecat = pd.cut(df['price'], bins=3, labels=['low', 'med', 'high']))
+ .filter(['x', 'z', 'pricecat'])
+ .rename(columns={'x': 'width', 'z':'depth'})
+ .melt(id_vars=['pricecat'], value_vars=['width', 'depth'],
+        var_name='dim', value_name='mm')
+ .query('2 < mm < 10')
+)
+
+g = sns.FacetGrid(data = dfPlot, col='pricecat', hue='dim')
+
+g.map(sns.kdeplot, 'mm', shade=True, alpha=0.5).add_legend()
+
+plt.show()
+
+```
+
+```{python}
+#| label: PYTHONPIVOTPLOTPIPE
+
+(df
+ .assign(pricecat = pd.cut(df['price'], bins=3, labels=['low', 'med', 'high']))
+ .filter(['x', 'z', 'pricecat'])
+ .rename(columns={'x': 'width', 'z':'depth'})
+ .melt(id_vars=['pricecat'], value_vars=['width', 'depth'],
+        var_name='dim', value_name='mm')
+ .query('2 < mm < 10')
+ .pipe((sns.FacetGrid, 'data'),
+        col='pricecat', hue='dim', height=6)
+ .map(sns.kdeplot, 'mm', shade=True, alpha=0.5)
+ .add_legend(fontsize=14)
+)
+
+plt.show()
+
+```
+
+```{python}
+#| label: PYTHONPLOTEX2
+
+(df
+ .query('cut in ["Ideal", "Good"] & \
+         clarity in ["IF", "SI2"] & \
+         carat < 3')
+ .pipe((sns.FacetGrid, 'data'),
+       row='cut', col='clarity', hue='color',
+       hue_order=list('DEFGHIJ'),
+       height=6,
+       legend_out=True)
+ .map(sns.scatterplot, 'carat', 'price', alpha=0.8)
+ .add_legend()
+)
+
+plt.show()
+```
+
+## Advance matplotlib options
+
+```{python}
+#| label: PYTHONPLOTADV1
+
+fig, ax = plt.subplots(1,1, figsize=(8,8))
+
+pal = dict(zip(df['color'].unique(), sns.color_palette('Set1', desat=.9)))
+
+pal['Other'] = (1,1,1)
+
+(df
+ .assign(nice = np.where((df['cut']=='Ideal') & (df['clarity']=='IF'), df['color'], 'Other'))
+ .sort_values(by='nice', ascending=False)
+ .pipe((sns.scatterplot, 'data'),
+        x='carat', y='price',
+        hue='nice', hue_order=np.append('Other', list('DEFGHIJ')),
+        palette=pal,
+        alpha=0.8,
+        edgecolor=(0.92,0.92,0.92),
+        ax=ax)
+)
+
+plt.show()
+
+```

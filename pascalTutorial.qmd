@@ -1,0 +1,111 @@
+---
+title: "Pascal tutorial"
+format: html
+editor: visual
+---
+
+# PACKAGES AND LIBRARIES
+
+## R
+
+```{r}
+#| label: LOADPACKAGE
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(ggrepel)
+library(reticulate)
+
+# Conda env specification
+
+# use_condaenv(
+#         condaenv = 'rToPython'
+# )
+```
+
+## Python
+
+```{python}
+#| label: LOADLIBRARY
+
+import numpy as np
+import pandas as pd
+from plotnine import *
+from adjustText import adjust_text
+from mizani.formatters import dollar_format
+
+```
+
+# LOAD DATA
+
+```{r}
+#| label: DATALOAD
+
+# Data url
+
+costUrl <-
+        'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_cost.csv'
+
+incomeUrl <-
+        'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-10/tuition_income.csv'
+
+# Data load
+
+tuitionCost <- 
+        read_csv(costUrl) %>%
+        select(name, type, degree_length, in_state_tuition)
+
+tuitionIncome <- 
+        read_csv(incomeUrl)
+
+
+```
+
+# DATA WRANGLE
+
+## R
+
+```{r}
+#| label: RDATAWRANGLE
+
+tuitionIncome %>% 
+        select(-c(net_cost, income_lvl)) %>% 
+        group_by(name, year) %>% 
+        summarise(
+                avgPerYear =
+                        mean(total_price, na.rm = T)
+        ) %>% 
+        ungroup() %>% 
+        arrange(name, year)
+
+```
+
+## Python
+
+```{python}
+#| label: PYTHONDATAWRANGLE
+
+sumPy1 = (r.tuitionIncome
+                .filter(["name", "total_price", "year"])
+                .groupby(["name", "year"])
+                .agg({"total_price": "mean"})
+                .reset_index()
+                .sort_values(["name", "year"])
+                .rename(columns = {"total_price": "avgPeryear"})
+)
+
+sumPy1.head()
+
+sumPy2 = (r.tuitionIncome
+                .filter(["name", "total_price", "year"])
+                .assign(avg_per_year = lambda x: x.groupby(["name", "year"])["total_price"]
+                .transform(lambda x: x.mean())) 
+                .drop("total_price", axis = 1)
+                .drop_duplicates()
+                .sort_values(["name", "year"])
+)
+
+sumPy2.head()
+
+```
