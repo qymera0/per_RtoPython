@@ -16,6 +16,7 @@ editor: visual
 library(tidyverse)
 library(ggrepel)
 library(reticulate)
+library(lubridate)
 
 # Conda env specification
 
@@ -59,7 +60,6 @@ tuitionCost <-
 tuitionIncome <- 
         read_csv(incomeUrl)
 
-
 ```
 
 # DATA WRANGLE
@@ -69,7 +69,8 @@ tuitionIncome <-
 ```{r}
 #| label: RDATAWRANGLE
 
-tuitionIncome %>% 
+tempR <-
+        tuitionIncome %>% 
         select(-c(net_cost, income_lvl)) %>% 
         group_by(name, year) %>% 
         summarise(
@@ -92,7 +93,7 @@ sumPy1 = (r.tuitionIncome
                 .agg({"total_price": "mean"})
                 .reset_index()
                 .sort_values(["name", "year"])
-                .rename(columns = {"total_price": "avgPeryear"})
+                .rename(columns = {"total_price": "avgPerYear"})
 )
 
 sumPy1.head()
@@ -104,8 +105,222 @@ sumPy2 = (r.tuitionIncome
                 .drop("total_price", axis = 1)
                 .drop_duplicates()
                 .sort_values(["name", "year"])
+                .rename(columns = {"avg_per_year": "avgPerYear"})
 )
 
 sumPy2.head()
+
+```
+
+# DATA ANALYSIS
+
+## Differences in tuition
+
+### R
+
+```{r}
+#| label: RTUITIONCHANGE
+
+tempRSumm <-
+        tempR %>% 
+        group_by(name) %>% 
+        mutate(
+                count = n(),
+                difference = c(NA, diff(avgPerYear))
+        ) %>% 
+        filter(difference >= 0 | is.na(difference)) %>% 
+        mutate(
+                count2 = n()
+        ) %>% 
+        filter(count == count2)
+
+```
+
+### Python
+
+```{python}
+#| label: PYTHONTUITIONCHANGE
+
+tempPySum = (sumPy1
+                .assign(
+                        count = lambda x: x.groupby("name")["name"]
+                                .transform("count"),
+                        difference = lambda x: x.groupby("name")["avgPerYear"]
+                                .transform(lambda x: np.append(np.nan, np.diff(x)))
+                        ) \
+                .query("(difference >= 0) or difference != difference") \
+                .assign(
+                        count2 = lambda x: x.groupby("name")["name"]
+                                .transform("count")
+                        ) \
+                .query("(count2 == count)")
+)
+
+```
+
+## Final data constructions
+
+### R
+
+```{r}
+#| label: RFINALDATACALC
+
+lineChart <-
+        tempRSumm %>% 
+        filter(count2 >= 4) %>% 
+        ungroup() %>% 
+        inner_join(
+                tuitionCost %>% 
+                        select(type, name, degree_length),
+                by = 'name'
+        ) %>% 
+        filter(degree_length == '4 Year') %>% 
+        group_by(name) %>% 
+        mutate(
+                changeInPrice = (last(avgPerYear) - avgPerYear[1])/avgPerYear[1]
+        ) %>% 
+        ungroup() %>% 
+        group_split(type) %>% 
+        map(
+                ~ arrange(., desc(changeInPrice))
+        ) %>% 
+        map(
+                ~ filter(., str_detect(name, {unique(.$name)[1:3]} %>% 
+                                             paste0(collapse = "|")))
+        ) %>% 
+        bind_rows() %>% 
+        ungroup() %>% 
+        mutate(
+                name = fct_reorder(name, avgPerYear),
+                date = ymd(year, truncated = 2L)
+        )
+
+dfText <-
+        lineChart %>% 
+        group_by(name) %>% 
+        summarise_all(~max(.))
+
+```
+
+### Python
+
+```{python}
+#| label: PYTHOFINALDATACALC
+
+# Inner joing to get degree lenght and type of universit
+
+tuitionIncome = pd.merge(tempPySum, r.tuitionCost, on = 'name')
+
+tempPy2 = (tuitionIncome
+           .query('degree_length == "4 Year"')
+           .assign(
+                   changeInPrice = lambda x: x.groupby("name")["avgPerYear"]
+                                   .transform(lambda x: (x.iloc[-1]-x.iloc[0])/x.iloc[0])
+                )
+)
+
+diffTypes = np.unique(tuitionIncome["type"])
+
+# Initializing empty dataframe
+
+df = pd.DataFrame(columns = tuitionIncome.columns)
+
+for i in range(len(diffTypes)):
+        
+        tuIn = (tempPy2
+                .groupby("type")
+                .get_group(diffTypes[i])
+                .sort_values("changeInPrice", ascending = False)
+        )
+        
+        top3 = (tuIn
+                .drop_duplicates("name")["name"][0:3]
+                .reset_index()
+                
+        )
+        
+        tuIn = (tuIn[tuIn["name"].isin(top3["name"])]
+                .sort_values(["name", "year"])
+                
+        )
+        
+        df = pd.concat([df, tuIn])
+
+df.head()
+
+dfText = (df
+          .sort_values(["name", "type", "year"], ascending=False)
+          .drop_duplicates("name")
+          .assign(
+                  changeInPrice = lambda x: round(x["changeInPrice"]*100, 2)
+          )
+)
+```
+
+## PLOT
+
+### Python
+
+```{python}
+#| label: PYTHONPLOT
+
+# ggplot style
+
+(ggplot(df, 
+        aes(x = "factor(year)", 
+        y = "avgPerYear", 
+        color = "factor(name)", 
+        group = "name")) +
+    geom_point() +
+    geom_line() +
+    geom_label(data = dfText, 
+               mapping = aes(x = "factor(year)", y = "avgPerYear",
+               label = "changeInPrice"), 
+               color = "black",
+               format_string='{}%') +
+    theme_light() +
+    theme(legend_position = (.5, -.1),
+          legend_direction = 'horizontal',
+          plot_title = element_text(hjust = 0.5, size = 20),
+          legend_title = element_blank(),
+          axis_title = element_text(size = 15),
+          axis_text = element_text(size = 12),
+          legend_text = element_text(size = 12)) +
+          scale_y_continuous(labels = dollar_format()) +
+     ylab("Tuition") +
+     xlab("Year") +
+     ggtitle("Top 9 Universities With the Most Tuition Increase Over Time"))
+
+```
+
+### R
+
+```{r}
+#| label: RPLOT
+
+ggplot(lineChart) + 
+  geom_point(aes(x = date, y = avgPerYear, col = name)) +
+  geom_line(aes(x = date, y = avgPerYear, col = name)) +
+  expand_limits(x = lubridate::ymd(2018.5, truncated = 2L)) +
+  geom_label_repel(data = dfText, 
+                   show.legend = FALSE,
+                   aes(x = date, y = avgPerYear, 
+                       size = 0.5,
+                       label = paste0(round(changeInPrice, 2) * 100, 
+                                      "% ", 
+                                      type))) +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  ylab("Tuition") +
+  xlab("Year") +
+  ggtitle("Top 3 Universities From Each Type (Public, Private, For Profit) \n With the Most Tuition Increase Over Time") +
+  guides(col = guide_legend(nrow = 3, byrow = TRUE)) +
+  scale_color_brewer(palette = "Set1") + 
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5, size = 20),
+        legend.title = element_blank(),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 12),
+        legend.text = element_text(size = 12))
 
 ```

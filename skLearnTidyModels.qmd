@@ -1,0 +1,147 @@
+---
+title: "skLearn and Tidymodels"
+format: html
+editor: visual
+---
+
+# LOAD PACKAGES AND LIBRARIES
+
+## R
+
+```{r}
+#| label: LOADPACKAGES
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(tidymodels)
+library(modeldata)
+library(vip)
+library(readr)
+
+```
+
+## Python
+
+```{python}
+#| label: LOADLIBRARIES
+
+# General libraries
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Specific functions
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import FunctionTransformer
+from sklearn.compose import make_column_transformer
+from sklearn.tree import DecisionTreeClassifier
+
+# Configure numpy random seed
+
+np.random.seed(753)
+
+```
+
+# LOAD DATA
+
+## R
+
+```{r}
+#| label: DATALOAD
+
+data(cells, package = 'modeldata')
+
+```
+
+# SPLIT DATA
+
+## R
+
+```{r}
+#| label: RSPLITDATA
+
+cellSplit <- initial_split(cells, strata = class)
+
+cellTrain <- training(cellSplit)
+
+cellTest <- testing(cellSplit)
+
+```
+
+## Python
+
+```{python}
+#| label: PYTHONSPLITDATA
+
+features = (r.cells
+                .drop('class', axis=1)
+)
+
+outcome = (r.cells['class'])
+
+xTrain, xTest, yTrain, yTest = train_test_split(
+        features,
+        outcome,
+        test_size = 0.25,
+        stratify = outcome
+)
+
+```
+
+# RECIPIES / PREPROCESSING
+
+## R
+
+```{r}
+#| label: RECIPIES
+
+treeRec <-
+        recipe(
+                class ~., data = cells
+        ) %>% 
+        step_rm(case) %>% 
+        step_string2factor(all_outcomes())
+
+```
+
+## Python
+
+```{python}
+#| label: PREPROCESSING
+
+treePreProcess = make_column_transformer(
+        (FunctionTransformer(),
+        (features
+         .drop('case', axis=1)
+         .columns)
+         )
+)
+
+```
+
+# MODEL SPECIFICATION
+
+## R
+
+```{r}
+#| label: MODELSPEC
+
+treeModel <-
+        decision_tree(
+                cost_complexity = tune(),
+                tree_depth = tune()
+        ) %>% 
+        set_engine('rpart') %>% 
+        set_mode('classification')
+
+```
+
+## Python
+
+Not necessary to specify the model on Python
+
+# WORKFLOW AND PIPELINE
