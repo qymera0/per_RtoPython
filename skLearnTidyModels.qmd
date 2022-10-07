@@ -18,6 +18,7 @@ library(tidymodels)
 library(modeldata)
 library(vip)
 library(readr)
+library(doParallel)
 
 ```
 
@@ -35,10 +36,17 @@ import seaborn as sns
 
 # Specific functions
 
+from joblib import parallel_backend
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.compose import make_column_transformer
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import make_scorer
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import roc_auc_score
+
 
 # Configure numpy random seed
 
@@ -145,3 +153,242 @@ treeModel <-
 Not necessary to specify the model on Python
 
 # WORKFLOW AND PIPELINE
+
+## R
+
+```{r}
+#| label: WORKFLOW
+
+treeWf <-
+        workflow() %>% 
+        add_recipe(treeRec) %>% 
+        add_model(treeModel)
+
+```
+
+## Python
+
+```{python}
+#| label: PIPELINE
+
+treePipeline = make_pipeline(
+        treePreProcess,
+        DecisionTreeClassifier()
+)
+
+```
+
+# TUNNING GRID
+
+## R
+
+```{r}
+#| label: RTUNNINGGRID
+
+treeGrid <-
+        grid_regular(
+                cost_complexity(),
+                tree_depth(),
+                levels = 5
+        )
+
+```
+
+## Python
+
+```{python}
+#| label: PYTHONTUNNINGGRID
+
+paramGrid = {
+        'decisiontreeclassifier__max_depth': [1, 4, 8, 11, 15],
+        'decisiontreeclassifier__ccp_alpha': [0.0000000001, 0.0000000178, 0.00000316, 0.000562, 0.1]
+}
+```
+
+# CROSS VALIDATIONS CONSTRUCTION
+
+## R
+
+```{r}
+#| label: RCROSSVALIDATION
+
+set.seed(234)
+
+kfold <- vfold_cv(cellTrain, v = 4)
+```
+
+## Python
+
+For Python it is not necessary to create an object with CV information. But it is necessary to create an object with the metrics used on the model.
+
+```{python}
+#| label: PYTHONCROSSVALIDATION
+
+treeScorer = {
+    'roc_auc': make_scorer(roc_auc_score, needs_proba=True),
+    'accuray': make_scorer(accuracy_score)
+}
+
+```
+
+# RUN GRID
+
+## R
+
+```{r}
+#| label: RGRIDSHEARCH
+
+ctrlG <- control_grid(parallel_over = "resamples")
+
+cl <- makePSOCKcluster(4L)
+
+registerDoParallel(cl)
+
+tuneRes <-
+        treeWf %>% 
+        tune_grid(
+                resamples = kfold,
+                grid = treeGrid,
+                control = ctrlG
+        )
+
+stopCluster(cl)
+
+registerDoSEQ()
+```
+
+## Python
+
+```{python}
+#| label: PYTHONGRIDSEARCHNOX
+
+treeTuner = GridSearchCV(
+        treePipeline,
+        paramGrid,
+        cv=4,
+        scoring=treeScorer,
+        refit='roc_auc'
+)
+
+with parallel_backend('threading', n_jobs=4):
+        treeRes = treeTuner.fit(xTrain, yTrain)
+
+```
+
+# BEST HYPERPARAMETERS
+
+## R
+
+```{r}
+#| label: RRANKPARAMETERS
+
+tuneRes %>% 
+        show_best('roc_auc')
+
+```
+
+```{r}
+#| label: RBESTPARAMETERS
+
+bestParam <-
+        tuneRes %>% 
+        select_best('roc_auc')
+
+bestParam
+```
+
+## Python
+
+```{python}
+#| label: PYTHONRANKPARAMETERS
+
+bestParams = (pd.DataFrame(treeRes.cv_results_)
+                .sort_values('mean_test_roc_auc', ascending=False)
+                .rename(columns={
+                        'param_decisiontreeclassifier__ccp_alpha': 'cost',
+                        'param_decisiontreeclassifier__max_depth': 'max_depth'
+                }
+                )
+                .filter(['cost', 'max_depth', 'mean_test_accuray', 'mean_test_roc_auc'])
+)
+
+bestParams.head()
+```
+
+# FINALIZE WORKFLOW / PIPELINE
+
+## R
+
+```{r}
+#| label: RFINALIZEWORKFLOW
+
+bestTree <-
+        treeWf %>% 
+        finalize_workflow(bestParam) %>% 
+        fit(data = cellTrain)
+
+```
+
+## Python
+
+```{python}
+#| label: PYTHONFINALIZEPIPELINE
+
+bestTree = treeRes.best_estimator_.named_steps['decisiontreeclassifier']
+
+ct = treeRes.best_estimator_.named_steps['columntransformer']
+
+```
+
+# VARIABLE IMPORTANCE
+
+## R
+
+```{r}
+#| label: RVARIABLEIMPORTANCE
+
+bestTree %>% 
+        pull_workflow_fit() %>% 
+        vip()
+
+```
+
+```{python}
+#| label: PYTHONVARIABLEIMPORTANCE
+
+featImp = (pd.DataFrame({'name': ct.transformers_[0][2]})
+                .assign(importance = bestTree.feature_importances_)
+                .sort_values('importance', ascending=False)
+)
+
+sns.barplot(x='importance', y='name', data=featImp.head(10))
+
+plt.show()
+
+```
+
+# FINAL VALIDATION
+
+## R
+
+```{r}
+#| label: RFINALVALIDATION
+
+bestTree %>% 
+        last_fit(cellSplit) %>% 
+        collect_metrics()
+
+```
+
+## Python
+
+```{python}
+#| label: PYTHONFINALVALIDATION
+
+pd.DataFrame.from_records([
+        (name, scorer(treeRes.best_estimator_, xTest, yTest))
+        for name, scorer in treeScorer.items()
+],
+columns=['metric', 'score'])
+
+```
